@@ -155,7 +155,9 @@ def train():
 
     # Learning rate schedule: linearly warm-up to lr and then decrease the learning rate to zero with cosine schedule
     cos_scheduler = CosineAnnealingScheduler(optimizer, 'lr', args.lr, 0.0, len(train_loader) * args.n_epochs)
-    scheduler = create_lr_scheduler_with_warmup(cos_scheduler, 0.0, args.lr, args.n_warmup)
+    # scheduler = create_lr_scheduler_with_warmup(cos_scheduler, 0.0, args.lr, args.n_warmup)
+    scheduler = create_lr_scheduler_with_warmup(cos_scheduler, 0.0, args.n_warmup)
+    
     trainer.add_event_handler(Events.ITERATION_STARTED, scheduler)
 
     # Prepare metrics - note how we average distributed metrics using average_distributed_scalar
