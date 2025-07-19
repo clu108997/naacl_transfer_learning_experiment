@@ -75,7 +75,7 @@ def add_logging_and_checkpoint_saving(trainer, evaluator, metrics, model, optimi
     evaluator.add_event_handler(Events.COMPLETED, lambda _: pbar.log_message("Validation: %s" % pformat(evaluator.state.metrics)))
 
     # Add tensorboard logging with training and evaluation metrics
-    tb_logger = TensorboardLogger(log=None)
+    tb_logger = TensorboardLogger(log_dir=None)
     tb_logger.attach(trainer, log_handler=OutputHandler(tag="training", metric_names=[prefix + "loss"]),
                               event_name=Events.ITERATION_COMPLETED)
     tb_logger.attach(trainer, log_handler=OptimizerParamsHandler(optimizer),
