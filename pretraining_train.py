@@ -168,10 +168,11 @@ def train():
     metrics["average_word_ppl"] = MetricsLambda(lambda x: math.exp(x * val_loader.dataset.numel() / valid_num_words), metrics["average_nll"])
     for name, metric in metrics.items():
         metric.attach(evaluator, name)
-
+    
+    # 19/7: commented out since it's resulting errors, not needed, and not use elsewhere. 
     # On the main process: add progress bar, tensorboard, checkpoints and save model and configuration before we start to train
-    if args.local_rank in [-1, 0]:
-        checkpoint_handler, tb_logger = add_logging_and_checkpoint_saving(trainer, evaluator, metrics, model, optimizer, args)
+    # if args.local_rank in [-1, 0]:
+    #     checkpoint_handler, tb_logger = add_logging_and_checkpoint_saving(trainer, evaluator, metrics, model, optimizer, args)
 
     # Run the training
     trainer.run(train_loader, max_epochs=args.n_epochs)
