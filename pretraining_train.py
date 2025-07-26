@@ -160,6 +160,9 @@ def train():
     
     trainer.add_event_handler(Events.ITERATION_STARTED, scheduler)
 
+    # printing out the learning rate
+    trainer.add_event_handler(Events.ITERATION_STARTED, lambda engine: print(f" Learning Rate: {optimizer.param_groups[0]['lr']:.6f}"))
+
     # Prepare metrics - note how we average distributed metrics using average_distributed_scalar
     metrics = {"nll": Loss(torch.nn.CrossEntropyLoss(ignore_index=-1))}
     metrics.update({"average_nll": MetricsLambda(average_distributed_scalar, metrics["nll"], args)})
