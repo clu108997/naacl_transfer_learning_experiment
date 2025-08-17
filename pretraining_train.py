@@ -15,6 +15,8 @@ from ignite.contrib.handlers import CosineAnnealingScheduler, create_lr_schedule
 from ignite.engine import Engine, Events
 from ignite.metrics import Loss, MetricsLambda
 
+from ignite.handlers import ExpStateScheduler
+
 from pytorch_pretrained_bert import BertTokenizer
 
 from pretraining_model import TransformerWithLMHead
@@ -72,6 +74,10 @@ def train():
 
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device (cuda or cpu)")
     parser.add_argument("--local_rank", type=int, default=-1, help="Local rank for distributed training (-1: not distributed)")
+    
+    parser.add_argument("--scheduler_type", type=str, default="cosine", help="Learning Rate Scheduler Type")
+
+    
     args = parser.parse_args()
 
     # logging is set to INFO (resp. WARN) for main (resp. auxiliary) process. logger.info => log on main process only, logger.warning => log on all processes
@@ -153,12 +159,19 @@ def train():
         trainer.add_event_handler(Events.EPOCH_STARTED, lambda engine: train_sampler.set_epoch(engine.state.epoch))
         evaluator.add_event_handler(Events.EPOCH_STARTED, lambda engine: valid_sampler.set_epoch(engine.state.epoch))
 
-    # Learning rate schedule: linearly warm-up to lr and then decrease the learning rate to zero with cosine schedule
-    cos_scheduler = CosineAnnealingScheduler(optimizer, 'lr', args.lr, 0.0, len(train_loader) * args.n_epochs)
-    # scheduler = create_lr_scheduler_with_warmup(cos_scheduler, 0.0, args.lr, args.n_warmup)
-    scheduler = create_lr_scheduler_with_warmup(cos_scheduler, 0.0, args.n_warmup)
+    if args.scheduler_type == "exponential":
+      scheduler = ExpStateScheduler(param_name='lr', initial_value=args.lr, gamma=0.9)
+      trainer.add_event_handler(Events.EPOCH_COMPLETED, scheduler)
+    else:
+      scheduler = CosineAnnealingScheduler(optimizer, 'lr', args.lr, 0.0, len(train_loader) * args.n_epochs)
+      trainer.add_event_handler(Events.ITERATION_STARTED, scheduler)
+
+    # # Learning rate schedule: linearly warm-up to lr and then decrease the learning rate to zero with cosine schedule
+    # cos_scheduler = CosineAnnealingScheduler(optimizer, 'lr', args.lr, 0.0, len(train_loader) * args.n_epochs)
+    # # scheduler = create_lr_scheduler_with_warmup(cos_scheduler, 0.0, args.lr, args.n_warmup)
+    # scheduler = create_lr_scheduler_with_warmup(cos_scheduler, 0.0, args.n_warmup)
     
-    trainer.add_event_handler(Events.ITERATION_STARTED, scheduler)
+    # trainer.add_event_handler(Events.ITERATION_STARTED, scheduler)
 
     # printing out the learning rate
     trainer.add_event_handler(Events.EPOCH_STARTED, lambda engine: print(f" Scheduler Learning Rate: {scheduler.get_param()}"))
