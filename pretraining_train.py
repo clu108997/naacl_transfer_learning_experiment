@@ -76,6 +76,7 @@ def train():
     parser.add_argument("--local_rank", type=int, default=-1, help="Local rank for distributed training (-1: not distributed)")
     
     parser.add_argument("--scheduler_type", type=str, default="cosine", help="Learning Rate Scheduler Type")
+    parser.add_argument("--gamma", type=float, default=0.9, help="gamma argument for exponential scheduler")
 
     
     args = parser.parse_args()
@@ -160,11 +161,12 @@ def train():
         evaluator.add_event_handler(Events.EPOCH_STARTED, lambda engine: valid_sampler.set_epoch(engine.state.epoch))
 
     if args.scheduler_type == "exponential":
-      scheduler = ExpStateScheduler(param_name='lr', initial_value=args.lr, gamma=0.9)
-      trainer.add_event_handler(Events.EPOCH_COMPLETED, scheduler)
+        # scheduler = ExpStateScheduler(param_name='lr', initial_value=args.lr, gamma=0.9)
+        scheduler = ExpStateScheduler(param_name='lr', initial_value=args.lr, gamma=args.gamma)
+        trainer.add_event_handler(Events.EPOCH_COMPLETED, scheduler)
     else:
-      scheduler = CosineAnnealingScheduler(optimizer, 'lr', args.lr, 0.0, len(train_loader) * args.n_epochs)
-      trainer.add_event_handler(Events.ITERATION_STARTED, scheduler)
+        scheduler = CosineAnnealingScheduler(optimizer, 'lr', args.lr, 0.0, len(train_loader) * args.n_epochs)
+        trainer.add_event_handler(Events.ITERATION_STARTED, scheduler)
 
     # # Learning rate schedule: linearly warm-up to lr and then decrease the learning rate to zero with cosine schedule
     # cos_scheduler = CosineAnnealingScheduler(optimizer, 'lr', args.lr, 0.0, len(train_loader) * args.n_epochs)
