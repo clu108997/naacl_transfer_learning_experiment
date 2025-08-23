@@ -77,6 +77,8 @@ def train():
     
     parser.add_argument("--scheduler_type", type=str, default="cosine", help="Learning Rate Scheduler Type")
     parser.add_argument("--gamma", type=float, default=0.9, help="gamma argument for exponential scheduler")
+    parser.add_argument("--end_lr", type=float, default=0.0, help="end value for scheduler lr")
+    
 
     
     args = parser.parse_args()
@@ -165,7 +167,8 @@ def train():
         scheduler = ExpStateScheduler(param_name='lr', initial_value=args.lr, gamma=args.gamma)
         trainer.add_event_handler(Events.EPOCH_COMPLETED, scheduler)
     else:
-        scheduler = CosineAnnealingScheduler(optimizer, 'lr', args.lr, 0.0, len(train_loader) * args.n_epochs)
+        cos_scheduler = CosineAnnealingScheduler(optimizer, 'lr', args.lr, args.end_lr, len(train_loader) * args.n_epochs)
+        scheduler = create_lr_scheduler_with_warmup(cos_scheduler, 0.0, args.n_warmup)
         trainer.add_event_handler(Events.ITERATION_STARTED, scheduler)
 
     # # Learning rate schedule: linearly warm-up to lr and then decrease the learning rate to zero with cosine schedule
