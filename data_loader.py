@@ -19,6 +19,7 @@ from ignite.handlers import ExpStateScheduler
 
 from pytorch_pretrained_bert import BertTokenizer
 
+
 from pretraining_model import TransformerWithLMHead
 from utils import get_and_tokenize_dataset, average_distributed_scalar, add_logging_and_checkpoint_saving, WEIGHTS_NAME
 
@@ -43,6 +44,7 @@ def get_data_loaders(args, tokenizer):
     logger.info("Train dataset (Batch, Seq length): {}".format(datasets['train'].shape))
     logger.info("Valid dataset (Batch, Seq length): {}".format(datasets['valid'].shape))
     return train_loader, valid_loader, train_sampler, valid_sampler, datasets['train_num_words'], datasets['valid_num_words']
+
 
 
 def train():
@@ -80,7 +82,6 @@ def train():
     parser.add_argument("--end_lr", type=float, default=0.0, help="end value for scheduler lr")
     
 
-    
     args = parser.parse_args()
 
     # logging is set to INFO (resp. WARN) for main (resp. auxiliary) process. logger.info => log on main process only, logger.warning => log on all processes
@@ -110,97 +111,7 @@ def train():
     logger.info("Prepare datasets")
     train_loader, val_loader, train_sampler, valid_sampler, train_num_words, valid_num_words = get_data_loaders(args, tokenizer)
 
-    # Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original
-    def mask_tokens(inputs):
-        labels = inputs.clone()
-        masked_indices = torch.bernoulli(torch.full(labels.shape, args.mlm_probability)).byte()
-        labels[~masked_indices] = -1                            # We only compute loss on masked tokens
-        indices_replaced = torch.bernoulli(torch.full(labels.shape, 0.8)).byte() & masked_indices
-        inputs[indices_replaced] = tokenizer.vocab["[MASK]"]    # 80% of the time, replace masked input tokens with [MASK]
-        indices_random = torch.bernoulli(torch.full(labels.shape, 0.5)).byte() & masked_indices & ~indices_replaced
-        random_words = torch.randint(args.num_embeddings, labels.shape, dtype=torch.long, device=args.device)
-        inputs[indices_random] = random_words[indices_random]   # 10% of the time, replace masked input tokens with random word
-        return inputs, labels
-
-    # Training function and trainer
-    def update(engine, batch):
-        model.train()
-        inputs = batch.transpose(0, 1).contiguous().to(args.device)  # to shape [seq length, batch]
-        inputs, labels = mask_tokens(inputs) if args.mlm else (inputs, inputs)  # Prepare masked input/labels if we use masked LM
-        logits, loss = model(inputs, labels=labels)
-        loss = loss / args.gradient_accumulation_steps
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_norm)
-        if engine.state.iteration % args.gradient_accumulation_steps == 0:
-            optimizer.step()
-            optimizer.zero_grad()
-        return loss.item()
-    trainer = Engine(update)
-
-    # Evaluation function and evaluator (evaluator output is the input of the metrics)
-    def inference(engine, batch):
-        model.eval()
-        with torch.no_grad():
-            inputs = batch.transpose(0, 1).contiguous().to(args.device)  # to shape [seq length, batch]
-            inputs, labels = mask_tokens(inputs) if args.mlm else (inputs, inputs)  # Prepare masked input/labels if we use masked LM
-            logits = model(inputs)
-            shift_logits = logits[:-1] if not args.mlm else logits
-            shift_labels = labels[1:] if not args.mlm else labels
-            return shift_logits.view(-1, logits.size(-1)), shift_labels.view(-1)
-    evaluator = Engine(inference)
-
-    # Attach evaluation to trainer: we evaluate at the end of each epoch and every 'eval_every' iterations if needed
-    trainer.add_event_handler(Events.EPOCH_COMPLETED, lambda _: evaluator.run(val_loader))
-    if args.eval_every > 0:
-        trainer.add_event_handler(Events.ITERATION_COMPLETED,
-                lambda engine: evaluator.run(val_loader) if engine.state.iteration % args.eval_every == 0 else None)
-    if args.n_epochs < 1:
-        trainer.add_event_handler(Events.COMPLETED, lambda _: evaluator.run(val_loader))
-
-    # Make sure distributed data samplers split the dataset nicely between the distributed processes
-    if args.distributed:
-        trainer.add_event_handler(Events.EPOCH_STARTED, lambda engine: train_sampler.set_epoch(engine.state.epoch))
-        evaluator.add_event_handler(Events.EPOCH_STARTED, lambda engine: valid_sampler.set_epoch(engine.state.epoch))
-
-    if args.scheduler_type == "exponential":
-        # scheduler = ExpStateScheduler(param_name='lr', initial_value=args.lr, gamma=0.9)
-        scheduler = ExpStateScheduler(param_name='lr', initial_value=args.lr, gamma=args.gamma)
-        trainer.add_event_handler(Events.EPOCH_COMPLETED, scheduler)
-    else:
-        cos_scheduler = CosineAnnealingScheduler(optimizer, 'lr', args.lr, args.end_lr, len(train_loader) * args.n_epochs)
-        scheduler = create_lr_scheduler_with_warmup(cos_scheduler, 0.0, args.n_warmup)
-        trainer.add_event_handler(Events.ITERATION_STARTED, scheduler)
-
-    # # Learning rate schedule: linearly warm-up to lr and then decrease the learning rate to zero with cosine schedule
-    # cos_scheduler = CosineAnnealingScheduler(optimizer, 'lr', args.lr, 0.0, len(train_loader) * args.n_epochs)
-    # # scheduler = create_lr_scheduler_with_warmup(cos_scheduler, 0.0, args.lr, args.n_warmup)
-    # scheduler = create_lr_scheduler_with_warmup(cos_scheduler, 0.0, args.n_warmup)
-    
-    # trainer.add_event_handler(Events.ITERATION_STARTED, scheduler)
-
-    # printing out the learning rate
-    trainer.add_event_handler(Events.EPOCH_STARTED, lambda engine: print(f" Scheduler Learning Rate: {scheduler.get_param()}"))
-
-    # Prepare metrics - note how we average distributed metrics using average_distributed_scalar
-    metrics = {"nll": Loss(torch.nn.CrossEntropyLoss(ignore_index=-1))}
-    metrics.update({"average_nll": MetricsLambda(average_distributed_scalar, metrics["nll"], args)})
-    metrics["average_ppl"] = MetricsLambda(math.exp, metrics["average_nll"])
-    # Let's convert sub-word perplexities in word perplexities. If you need details: http://sjmielke.com/comparing-perplexities.htm
-    metrics["average_word_ppl"] = MetricsLambda(lambda x: math.exp(x * val_loader.dataset.numel() / valid_num_words), metrics["average_nll"])
-    for name, metric in metrics.items():
-        metric.attach(evaluator, name)
-    
-    # On the main process: add progress bar, tensorboard, checkpoints and save model and configuration before we start to train
-    if args.local_rank in [-1, 0]:
-        checkpoint_handler, tb_logger = add_logging_and_checkpoint_saving(trainer, evaluator, metrics, model, optimizer, args)
-
-    # Run the training
-    trainer.run(train_loader, max_epochs=args.n_epochs)
-
-    # On the main process: close tensorboard logger and rename the last checkpoint for easy re-loading
-    if args.local_rank in [-1, 0] and args.n_epochs > 0:
-        tb_logger.close()
-
 
 if __name__ == "__main__":
     train()
+    # get_data_loaders()
