@@ -117,6 +117,8 @@ def get_and_tokenize_dataset(tokenizer, dataset_dir='wikitext-103', dataset_cach
             dataset_file = cached_path(dataset_map[split_name])
             with open(dataset_file, "r", encoding="utf-8") as f:
                 all_lines = f.readlines()
+                for i in range(min( 10, len(all_lines))):
+                  logger.info(all_lines[i].strip())
                 dataset[split_name] = [
                         line.strip(' ').replace('<unk>', '[UNK]').replace('\n', '[SEP]' if not with_labels else '')
                         for line in tqdm(all_lines)]
@@ -130,6 +132,8 @@ def get_and_tokenize_dataset(tokenizer, dataset_dir='wikitext-103', dataset_cach
                 with open(dataset_file, "r", encoding="utf-8") as f:
                     all_lines = f.readlines()
                     labels[split_name] = [label_conversion_map[line.strip()] for line in tqdm(all_lines)]
+
+
 
         # Tokenize and encode the dataset
         logger.info("Tokenize and encode the dataset")
